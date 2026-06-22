@@ -210,7 +210,7 @@
   .hour-cell:first-child{border-left:none;}
   .track{
     position:relative;
-    height:54px;
+    height:70px;
     border-top:1px solid var(--line);
   }
   .track-grid{
@@ -240,14 +240,19 @@
   }
   .booking-block{
     position:absolute;
-    top:7px;
-    height:40px;
+    top:6px;
+    height:58px;
     background:var(--amber-soft);
     border:1px solid var(--amber);
     border-radius:8px;
     padding:5px 8px;
     overflow:hidden;
     z-index:2;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    gap:2px;
+    min-width:60px;
   }
   .booking-block .b-time{
     font-family:'JetBrains Mono',monospace;
@@ -255,6 +260,8 @@
     color:var(--amber);
     font-weight:600;
     white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
   }
   .booking-block .b-title{
     font-size:11px;
@@ -493,7 +500,7 @@
   // =========================================================
   //  CONFIGURAÇÃO — altere a URL se a API mudar de endereço
   // =========================================================
-  const API_BASE = 'http://localhost:5087';
+  const API_BASE = 'http://10.123.97.137:5087';
 
   const START_HOUR = 7;
   const END_HOUR   = 20;
