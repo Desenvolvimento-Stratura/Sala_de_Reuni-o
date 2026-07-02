@@ -1,8 +1,7 @@
 appsettings.json
 appsettings.*.json
-
 cert.pem
 cert-key.pem
-
 Iniciar.bat
 Iniciar.vbs
+*.txt
