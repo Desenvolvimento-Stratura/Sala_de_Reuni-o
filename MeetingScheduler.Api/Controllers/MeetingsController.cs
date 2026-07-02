@@ -58,6 +58,9 @@ public class MeetingsController : ControllerBase
             return BadRequest("A sala já está reservada nesse horário.");
         }
 
+        meeting.CreatedByLogin =
+        User.Identity?.Name ?? "Desconhecido";
+
         _context.Meetings.Add(meeting);
 
         await _context.SaveChangesAsync();

@@ -400,7 +400,7 @@ function Timeline({ bookings, currentDate }) {
   );
 }
 
-function BookingList({ bookings, onCancel }) {
+function BookingList({ bookings, onCancel, currentUser }) {
   const [confirming, setConfirming] = useState(null);
 
   const handleCancel = (id) => {
@@ -419,27 +419,35 @@ function BookingList({ bookings, onCancel }) {
   const sorted = [...bookings].sort((a, b) => toMinutes(a.startTime) - toMinutes(b.startTime));
   return (
     <ul className="sr-list">
-      {sorted.map((b) => (
-        <li key={b.id} className="sr-list-item">
-          <span className="sr-li-time">{fmtRange(b.startTime, b.endTime)}</span>
-          <span className="sr-li-info">
-            <div className="sr-li-title">{b.title}</div>
-            <div className="sr-li-person">{b.createdByLogin}</div>
-          </span>
-          <button
-            className={`sr-cancel${confirming === b.id ? " confirming" : ""}`}
-            onClick={() => handleCancel(b.id)}
-          >
-            {confirming === b.id ? "Confirmar?" : "Cancelar"}
-          </button>
-        </li>
-      ))}
+      {sorted.map((b) => {
+        const isOwner = currentUser &&
+          b.createdByLogin.toLowerCase() === currentUser.toLowerCase();
+        return (
+          <li key={b.id} className="sr-list-item">
+            <span className="sr-li-time">{fmtRange(b.startTime, b.endTime)}</span>
+            <span className="sr-li-info">
+              <div className="sr-li-title">{b.title}</div>
+              <div className="sr-li-person">{b.createdByLogin}</div>
+            </span>
+            {isOwner && (
+              <button
+                className={`sr-cancel${confirming === b.id ? " confirming" : ""}`}
+                onClick={() => handleCancel(b.id)}
+              >
+                {confirming === b.id ? "Confirmar?" : "Cancelar"}
+              </button>
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
 // ─── main component ──────────────────────────────────────────────────────────
-export default function SalaDeReuniao() {
+export default function SalaDeReuniao({ user, onLogout }) {
+  // extrai "javson.silva" de "javson.silva@stratura.com.br"
+  const currentUser = user?.username?.split("@")[0] ?? "";
   const [clock, setClock] = useState("");
   const [rooms, setRooms] = useState([]);
   const [currentRoomId, setCurrentRoomId] = useState(null);
@@ -455,7 +463,7 @@ export default function SalaDeReuniao() {
   const [animKey, setAnimKey] = useState(0);
 
   // form
-  const [person, setPerson] = useState("");
+  const [person, setPerson] = useState(currentUser);
   const [title, setTitle] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
@@ -574,7 +582,7 @@ export default function SalaDeReuniao() {
         startTime: startTime + ":00",
         endTime: endTime + ":00",
         roomId: currentRoomId,
-        createdByLogin: person,
+        createdByLogin: currentUser,
       });
       await refresh();
       setSuccess(`Reservado: ${startTime}–${endTime} para "${title}".`);
@@ -607,7 +615,22 @@ export default function SalaDeReuniao() {
           {/* header */}
           <header className="sr-header">
             <div className="sr-logo">Sala de <span>Reunião</span></div>
-            <div className="sr-clock">{clock}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className="sr-clock">{clock}</div>
+              {onLogout && (
+                <button onClick={onLogout} style={{
+                  background: 'transparent',
+                  border: '1px solid rgba(244,242,237,0.24)',
+                  color: '#9aa0ad',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  padding: '6px 12px',
+                  borderRadius: '7px',
+                  cursor: 'pointer',
+                  fontFamily: 'Manrope, sans-serif'
+                }}>Sair</button>
+              )}
+            </div>
           </header>
 
           {/* status hero */}
@@ -666,10 +689,9 @@ export default function SalaDeReuniao() {
                   <input
                     className="sr-input"
                     type="text"
-                    placeholder="Ex: marina.souza"
-                    value={person}
-                    onChange={(e) => setPerson(e.target.value)}
-                    required
+                    value={currentUser}
+                    readOnly
+                    style={{ opacity: 0.7, cursor: 'not-allowed' }}
                   />
                 </label>
                 <label className="sr-field">
@@ -721,7 +743,7 @@ export default function SalaDeReuniao() {
           {/* booking list */}
           <section className="sr-panel">
             <h2 className="sr-panel-title">Reservas do dia</h2>
-            <BookingList bookings={bookings} onCancel={handleCancel} />
+            <BookingList bookings={bookings} onCancel={handleCancel} currentUser={currentUser} />
           </section>
 
           <p className="sr-note">Conectado à API · {apiStatus}</p>
