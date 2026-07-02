@@ -5,7 +5,7 @@ const START_HOUR = 7;
 const END_HOUR = 20;
 const HOUR_W = 64;
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// --- helpers ---------------------------------------------------------
 const pad = (n) => String(n).padStart(2, "0");
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const isSameDay = (a, b) =>
@@ -21,7 +21,7 @@ const fmtRange = (s, e) => `${fmtTime(s)} – ${fmtTime(e)}`;
 const formatDayLabel = (d) =>
   new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).format(d);
 
-// ─── API ────────────────────────────────────────────────────────────────────
+// --- API ---------------------------------------------------------------
 async function apiFetch(path, options = {}) {
   const res = await fetch(API_BASE + path, {
     headers: { "Content-Type": "application/json" },
@@ -35,13 +35,13 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-const fetchRooms = () => apiFetch("/api/rooms");
-const fetchMeetings = () => apiFetch("/api/meetings");
+const fetchRooms = (signal) => apiFetch("/api/rooms", { signal });
+const fetchMeetings = (signal) => apiFetch("/api/meetings", { signal });
 const postMeeting = (payload) =>
   apiFetch("/api/meetings", { method: "POST", body: JSON.stringify(payload) });
 const deleteMeeting = (id) => apiFetch(`/api/meetings/${id}`, { method: "DELETE" });
 
-// ─── styles ─────────────────────────────────────────────────────────────────
+// --- styles --------------------------------------------------------------
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
@@ -351,7 +351,7 @@ const css = `
   }
 `;
 
-// ─── subcomponents ──────────────────────────────────────────────────────────
+// --- subcomponents -------------------------------------------------------
 function Timeline({ bookings, currentDate }) {
   const totalHours = END_HOUR - START_HOUR;
   const trackWidth = totalHours * HOUR_W;
@@ -444,7 +444,7 @@ function BookingList({ bookings, onCancel, currentUser }) {
   );
 }
 
-// ─── main component ──────────────────────────────────────────────────────────
+// --- main component -------------------------------------------------------
 export default function SalaDeReuniao({ user, onLogout }) {
   // extrai "javson.silva" de "javson.silva@stratura.com.br"
   const currentUser = user?.username?.split("@")[0] ?? "";
@@ -463,13 +463,19 @@ export default function SalaDeReuniao({ user, onLogout }) {
   const [animKey, setAnimKey] = useState(0);
 
   // form
-  const [person, setPerson] = useState(currentUser);
   const [title, setTitle] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // --- controle de concorrência do refresh ---
+  // requestSeq garante que só o resultado da chamada MAIS RECENTE é aplicado.
+  // inFlightRef evita disparar um novo refresh enquanto o anterior ainda não voltou.
+  const requestSeqRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const abortRef = useRef(null);
 
   // clock
   useEffect(() => {
@@ -492,11 +498,30 @@ export default function SalaDeReuniao({ user, onLogout }) {
       .catch(() => setApiStatus("⚠ API offline"));
   }, []);
 
-  // load bookings
+  // load bookings — protegido contra sobreposição/race condition
   const refresh = useCallback(async () => {
     if (!currentRoomId) return;
+
+    // Se já existe uma chamada em andamento, não dispara outra por cima.
+    if (inFlightRef.current) return;
+
+    inFlightRef.current = true;
+    const mySeq = ++requestSeqRef.current;
+
+    // cancela qualquer requisição anterior ainda pendente, se o navegador suportar
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const all = await fetchMeetings();
+      const all = await fetchMeetings(controller.signal);
+
+      // Se, enquanto esperávamos, uma chamada mais nova já foi iniciada,
+      // descarta esse resultado desatualizado.
+      if (mySeq !== requestSeqRef.current) return;
+
       const key = dateKey(currentDate);
       const filtered = all.filter(
         (m) =>
@@ -505,8 +530,15 @@ export default function SalaDeReuniao({ user, onLogout }) {
       );
       setBookings(filtered);
       setApiStatus("conectado ✓");
-    } catch {
-      setApiStatus("⚠ Erro ao buscar reuniões");
+    } catch (err) {
+      if (err.name === "AbortError") return; // cancelado de propósito, ignora
+      if (mySeq === requestSeqRef.current) {
+        setApiStatus("⚠ Erro ao buscar reuniões");
+      }
+    } finally {
+      if (mySeq === requestSeqRef.current) {
+        inFlightRef.current = false;
+      }
     }
   }, [currentRoomId, currentDate]);
 
@@ -586,7 +618,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
       });
       await refresh();
       setSuccess(`Reservado: ${startTime}–${endTime} para "${title}".`);
-      setPerson(""); setTitle(""); setStartTime(""); setEndTime("");
+      setTitle(""); setStartTime(""); setEndTime("");
     } catch (err) {
       setError(err.message || "Não foi possível reservar.");
     } finally {
