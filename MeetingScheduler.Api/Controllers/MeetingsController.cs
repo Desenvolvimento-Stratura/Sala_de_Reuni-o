@@ -1,11 +1,13 @@
 using MeetingScheduler.Api.Data;
 using MeetingScheduler.Api.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MeetingScheduler.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class MeetingsController : ControllerBase
 {
@@ -14,6 +16,16 @@ public class MeetingsController : ControllerBase
     public MeetingsController(AppDbContext context)
     {
         _context = context;
+    }
+
+    // Extrai o login (parte antes do @) da identidade autenticada no token.
+    // NUNCA confie no valor enviado pelo cliente para identificar o usuário.
+    private string GetLogin()
+    {
+        var raw = User.FindFirst("preferred_username")?.Value
+                  ?? User.Identity?.Name
+                  ?? string.Empty;
+        return raw.Split('@')[0];
     }
 
     [HttpGet]
@@ -47,6 +59,15 @@ public class MeetingsController : ControllerBase
             return BadRequest("O horário final deve ser maior que o inicial.");
         }
 
+        // O criador é sempre o usuário autenticado — o corpo da requisição é ignorado.
+        meeting.CreatedByLogin = GetLogin();
+
+        // Transação Serializable: a checagem de conflito e a inserção viram uma
+        // operação atômica, impedindo que duas reservas simultâneas passem as duas
+        // na checagem e gerem uma reserva dupla (race condition TOCTOU).
+        await using var tx = await _context.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable);
+
         var conflict = await _context.Meetings.AnyAsync(m =>
             m.RoomId == meeting.RoomId &&
             m.MeetingDate == meeting.MeetingDate &&
@@ -58,14 +79,10 @@ public class MeetingsController : ControllerBase
             return BadRequest("A sala já está reservada nesse horário.");
         }
 
-        if (string.IsNullOrWhiteSpace(meeting.CreatedByLogin))
-        {
-            meeting.CreatedByLogin = "Desconhecido";
-        }
-
         _context.Meetings.Add(meeting);
 
         await _context.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return CreatedAtAction(
             nameof(GetMeetingById),
@@ -82,10 +99,17 @@ public class MeetingsController : ControllerBase
         if (meeting == null)
             return NotFound();
 
+        // Só o dono da reserva pode alterá-la.
+        if (!string.Equals(meeting.CreatedByLogin, GetLogin(), StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+
         if (updatedMeeting.StartTime >= updatedMeeting.EndTime)
         {
             return BadRequest("O horário final deve ser maior que o inicial.");
         }
+
+        await using var tx = await _context.Database.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable);
 
         var conflict = await _context.Meetings.AnyAsync(m =>
             m.Id != id &&
@@ -104,9 +128,10 @@ public class MeetingsController : ControllerBase
         meeting.StartTime = updatedMeeting.StartTime;
         meeting.EndTime = updatedMeeting.EndTime;
         meeting.RoomId = updatedMeeting.RoomId;
-        meeting.CreatedByLogin = updatedMeeting.CreatedByLogin;
+        // CreatedByLogin não é alterável — a reserva continua pertencendo a quem criou.
 
         await _context.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return NoContent();
     }
@@ -118,6 +143,10 @@ public class MeetingsController : ControllerBase
 
         if (meeting == null)
             return NotFound();
+
+        // Só o dono da reserva pode cancelá-la.
+        if (!string.Equals(meeting.CreatedByLogin, GetLogin(), StringComparison.OrdinalIgnoreCase))
+            return Forbid();
 
         _context.Meetings.Remove(meeting);
 

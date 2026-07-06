@@ -21,12 +21,21 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// CORS
+// CORS — libera apenas as origens do próprio frontend.
+// Origens extras podem ser adicionadas via config "Cors:AllowedOrigins" (array).
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? new[]
+    {
+        "https://sala-reuniao-web.onrender.com",
+        "http://localhost:5173"
+    };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactPolicy", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod();
     });

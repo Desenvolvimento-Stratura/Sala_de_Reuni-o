@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MeetingScheduler.Api.Data;
@@ -6,6 +7,7 @@ using MeetingScheduler.Api.Models;
 namespace MeetingScheduler.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class RoomsController : ControllerBase
 {

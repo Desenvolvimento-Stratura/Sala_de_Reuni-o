@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useMsal } from "@azure/msal-react";
+import { apiRequest } from "./authConfig";
 
 const API_BASE = "http://10.123.97.137:5087";
 const START_HOUR = 7;
 const END_HOUR = 20;
 const HOUR_W = 64;
 
-// --- helpers ---------------------------------------------------------
+// --- funções auxiliares ----------------------------------------------
 const pad = (n) => String(n).padStart(2, "0");
 const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const isSameDay = (a, b) =>
@@ -22,11 +24,11 @@ const formatDayLabel = (d) =>
   new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "2-digit", month: "long" }).format(d);
 
 // --- API ---------------------------------------------------------------
-async function apiFetch(path, options = {}) {
-  const res = await fetch(API_BASE + path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+async function apiFetch(path, token, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(API_BASE + path, { ...options, headers });
   if (!res.ok) {
     const msg = await res.text().catch(() => "");
     throw new Error(msg || `HTTP ${res.status}`);
@@ -35,13 +37,13 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-const fetchRooms = (signal) => apiFetch("/api/rooms", { signal });
-const fetchMeetings = (signal) => apiFetch("/api/meetings", { signal });
-const postMeeting = (payload) =>
-  apiFetch("/api/meetings", { method: "POST", body: JSON.stringify(payload) });
-const deleteMeeting = (id) => apiFetch(`/api/meetings/${id}`, { method: "DELETE" });
+const fetchRooms = (token, signal) => apiFetch("/api/rooms", token, { signal });
+const fetchMeetings = (token, signal) => apiFetch("/api/meetings", token, { signal });
+const postMeeting = (token, payload) =>
+  apiFetch("/api/meetings", token, { method: "POST", body: JSON.stringify(payload) });
+const deleteMeeting = (token, id) => apiFetch(`/api/meetings/${id}`, token, { method: "DELETE" });
 
-// --- styles --------------------------------------------------------------
+// --- estilos ---------------------------------------------------------------
 const css = `
   @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
@@ -79,7 +81,7 @@ const css = `
     gap: 22px;
   }
 
-  /* header */
+  /* cabeçalho */
   .sr-header {
     display: flex;
     align-items: baseline;
@@ -104,7 +106,7 @@ const css = `
     letter-spacing: .02em;
   }
 
-  /* status hero */
+  /* destaque de status */
   .sr-hero {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -145,7 +147,7 @@ const css = `
   }
   .sr-detail strong { color: var(--paper); font-weight: 600; }
 
-  /* panel */
+  /* painel */
   .sr-panel {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -161,7 +163,7 @@ const css = `
     font-weight: 700;
   }
 
-  /* sala selector */
+  /* seletor de sala */
   .sr-sala-row {
     display: flex;
     align-items: center;
@@ -197,7 +199,7 @@ const css = `
     white-space: nowrap;
   }
 
-  /* day nav */
+  /* navegação de dia */
   .sr-daynav {
     display: flex;
     align-items: center;
@@ -233,7 +235,7 @@ const css = `
     color: var(--paper);
   }
 
-  /* timeline */
+  /* linha do tempo */
   .sr-timeline-wrap {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -280,7 +282,7 @@ const css = `
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
 
-  /* form */
+  /* formulário */
   .sr-row { display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
   .sr-field {
     flex: 1; min-width: 140px;
@@ -313,7 +315,7 @@ const css = `
   .sr-banner.error strong { color: var(--coral); }
   .sr-banner.success { background: var(--mints); border: 1px solid var(--mint); color: var(--paper); }
 
-  /* list */
+  /* lista */
   .sr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .sr-list-item {
     display: flex; align-items: center; gap: 14px;
@@ -351,7 +353,7 @@ const css = `
   }
 `;
 
-// --- subcomponents -------------------------------------------------------
+// --- subcomponentes ------------------------------------------------------
 function Timeline({ bookings, currentDate }) {
   const totalHours = END_HOUR - START_HOUR;
   const trackWidth = totalHours * HOUR_W;
@@ -444,10 +446,24 @@ function BookingList({ bookings, onCancel, currentUser }) {
   );
 }
 
-// --- main component -------------------------------------------------------
+// --- componente principal -------------------------------------------------
 export default function SalaDeReuniao({ user, onLogout }) {
+  const { instance } = useMsal();
   // extrai "javson.silva" de "javson.silva@stratura.com.br"
   const currentUser = user?.username?.split("@")[0] ?? "";
+
+  // Obtém um access token para a API. Silencioso quando possível;
+  // se o consentimento/token expirou, redireciona para renovar.
+  const getToken = useCallback(async () => {
+    if (!user) return null;
+    try {
+      const res = await instance.acquireTokenSilent({ ...apiRequest, account: user });
+      return res.accessToken;
+    } catch {
+      await instance.acquireTokenRedirect({ ...apiRequest, account: user });
+      return null;
+    }
+  }, [instance, user]);
   const [clock, setClock] = useState("");
   const [rooms, setRooms] = useState([]);
   const [currentRoomId, setCurrentRoomId] = useState(null);
@@ -462,7 +478,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
   const [statusKey, setStatusKey] = useState("");
   const [animKey, setAnimKey] = useState(0);
 
-  // form
+  // formulário
   const [title, setTitle] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
@@ -477,7 +493,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
   const inFlightRef = useRef(false);
   const abortRef = useRef(null);
 
-  // clock
+  // relógio
   useEffect(() => {
     const tick = () => {
       const n = new Date();
@@ -488,17 +504,21 @@ export default function SalaDeReuniao({ user, onLogout }) {
     return () => clearInterval(id);
   }, []);
 
-  // load rooms
+  // carrega salas
   useEffect(() => {
-    fetchRooms()
-      .then((data) => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const data = await fetchRooms(token);
         setRooms(data);
         if (data.length) setCurrentRoomId(data[0].id);
-      })
-      .catch(() => setApiStatus("⚠ API offline"));
-  }, []);
+      } catch {
+        setApiStatus("⚠ API offline");
+      }
+    })();
+  }, [getToken]);
 
-  // load bookings — protegido contra sobreposição/race condition
+  // carrega reservas — protegido contra sobreposição/condição de corrida
   const refresh = useCallback(async () => {
     if (!currentRoomId) return;
 
@@ -516,7 +536,8 @@ export default function SalaDeReuniao({ user, onLogout }) {
     abortRef.current = controller;
 
     try {
-      const all = await fetchMeetings(controller.signal);
+      const token = await getToken();
+      const all = await fetchMeetings(token, controller.signal);
 
       // Se, enquanto esperávamos, uma chamada mais nova já foi iniciada,
       // descarta esse resultado desatualizado.
@@ -540,7 +561,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
         inFlightRef.current = false;
       }
     }
-  }, [currentRoomId, currentDate]);
+  }, [currentRoomId, currentDate, getToken]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -548,7 +569,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
     return () => clearInterval(id);
   }, [refresh]);
 
-  // compute status
+  // calcula status
   useEffect(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const isToday = isSameDay(currentDate, today);
@@ -608,13 +629,14 @@ export default function SalaDeReuniao({ user, onLogout }) {
     if (!currentRoomId) { setError("Selecione uma sala antes de reservar."); return; }
     setSubmitting(true);
     try {
-      await postMeeting({
+      const token = await getToken();
+      // createdByLogin não é enviado: o servidor define o criador a partir do token.
+      await postMeeting(token, {
         title,
         meetingDate: dateKey(currentDate),
         startTime: startTime + ":00",
         endTime: endTime + ":00",
         roomId: currentRoomId,
-        createdByLogin: currentUser,
       });
       await refresh();
       setSuccess(`Reservado: ${startTime}–${endTime} para "${title}".`);
@@ -628,7 +650,8 @@ export default function SalaDeReuniao({ user, onLogout }) {
 
   const handleCancel = async (id) => {
     try {
-      await deleteMeeting(id);
+      const token = await getToken();
+      await deleteMeeting(token, id);
       await refresh();
       setError(""); setSuccess("");
     } catch (err) {
@@ -644,7 +667,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
       <div className="sr-root">
         <div className="sr-app">
 
-          {/* header */}
+          {/* cabeçalho */}
           <header className="sr-header">
             <div className="sr-logo">Sala de <span>Reunião</span></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -665,7 +688,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
             </div>
           </header>
 
-          {/* status hero */}
+          {/* destaque de status */}
           <section className="sr-hero">
             <div className="sr-flap">
               <span key={animKey} className={`sr-status ${statusKind} anim`}>
@@ -681,7 +704,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
             </div>
           </section>
 
-          {/* sala selector */}
+          {/* seletor de sala */}
           <div className="sr-sala-row">
             <label htmlFor="roomSelect">Sala:</label>
             <select
@@ -700,7 +723,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
             </span>
           </div>
 
-          {/* day nav */}
+          {/* navegação de dia */}
           <nav className="sr-daynav">
             <button className="sr-nav-btn" onClick={() => changeDay(-1)} aria-label="Dia anterior">‹</button>
             <div className="sr-daylabel">{formatDayLabel(currentDate)}</div>
@@ -708,10 +731,10 @@ export default function SalaDeReuniao({ user, onLogout }) {
             <button className="sr-nav-btn" onClick={() => changeDay(1)} aria-label="Próximo dia">›</button>
           </nav>
 
-          {/* timeline */}
+          {/* linha do tempo */}
           <Timeline bookings={bookings} currentDate={currentDate} />
 
-          {/* form */}
+          {/* formulário */}
           <section className="sr-panel">
             <h2 className="sr-panel-title">Nova reserva</h2>
             <form onSubmit={handleSubmit}>
@@ -772,7 +795,7 @@ export default function SalaDeReuniao({ user, onLogout }) {
             {success && <div className="sr-banner success">{success}</div>}
           </section>
 
-          {/* booking list */}
+          {/* lista de reservas */}
           <section className="sr-panel">
             <h2 className="sr-panel-title">Reservas do dia</h2>
             <BookingList bookings={bookings} onCancel={handleCancel} currentUser={currentUser} />
