@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
 import { apiRequest } from "./authConfig";
 
-const API_BASE = "http://10.123.97.137:5087";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://sala-de-reuni-o.onrender.com";
 const START_HOUR = 7;
 const END_HOUR = 20;
 const HOUR_W = 64;
